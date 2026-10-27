@@ -1,0 +1,35 @@
+.layout-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh; /* Requisito de la consigna US #4 */
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 60px; /* Espacio para que el contenido no quede atrás de la barra */
+}
+
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  background-color: #ffffff;
+  border-top: 1px solid #ccc;
+  padding: 10px 0;
+  padding-bottom: env(safe-area-inset-bottom); /* Requisito de la consigna US #7 */
+}
+
+.nav-item {
+  text-decoration: none;
+  color: #666;
+  padding: 10px;
+}
+
+.nav-item.active {
+  color: #007bff;
+  font-weight: bold;
+}
