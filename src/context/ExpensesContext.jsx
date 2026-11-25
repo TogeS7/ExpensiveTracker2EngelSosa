@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { db } from '../services/firebase';
 
-const EXPENSES_KEY = '@expensetracker/expenses';
 const SETTINGS_KEY = '@expensetracker/settings';
 
 const DEFAULT_SETTINGS = {
@@ -10,40 +18,33 @@ const DEFAULT_SETTINGS = {
 
 const ExpensesContext = createContext(null);
 
-function readStorage(key, fallback) {
+function readSettingsStorage() {
   try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
-    return parsed ?? fallback;
+    return {
+      notifications: Boolean(parsed?.notifications),
+      darkMode: Boolean(parsed?.darkMode),
+    };
   } catch {
-    return fallback;
+    return DEFAULT_SETTINGS;
   }
 }
 
+function normalizeCreatedAt(rawCreatedAt) {
+  if (!rawCreatedAt) return new Date().toISOString();
+  if (typeof rawCreatedAt.toDate === 'function') {
+    return rawCreatedAt.toDate().toISOString();
+  }
+  return String(rawCreatedAt);
+}
+
 export function ExpensesProvider({ children }) {
-  const [expenses, setExpenses] = useState(() => {
-    const data = readStorage(EXPENSES_KEY, []);
-    return Array.isArray(data) ? data : [];
-  });
+  const [expenses, setExpenses] = useState([]);
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  const [settings, setSettings] = useState(() => {
-    const data = readStorage(SETTINGS_KEY, DEFAULT_SETTINGS);
-    return {
-      notifications: Boolean(data?.notifications),
-      darkMode: Boolean(data?.darkMode),
-    };
-  });
-
-  const isLoaded = true;
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(EXPENSES_KEY, JSON.stringify(expenses));
-    } catch {
-      // Evitar fallos si el almacenamiento está restringido
-    }
-  }, [expenses]);
+  const [settings, setSettings] = useState(() => readSettingsStorage());
 
   useEffect(() => {
     try {
@@ -52,6 +53,35 @@ export function ExpensesProvider({ children }) {
       // Evitar fallos si el almacenamiento está restringido
     }
   }, [settings]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, 'expenses'),
+      (snapshot) => {
+        const items = snapshot.docs.map((document) => {
+          const data = document.data({ serverTimestamps: 'estimate' });
+          return {
+            id: document.id,
+            title: data.title ?? '',
+            amount: Number(data.amount ?? 0),
+            category: data.category ?? 'Otros',
+            notes: data.notes ?? '',
+            createdAt: normalizeCreatedAt(data.createdAt),
+          };
+        });
+
+        items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setExpenses(items);
+        setIsLoaded(true);
+      },
+      (err) => {
+        console.error('Error al escuchar gastos en Firestore:', err);
+        setIsLoaded(true);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const addExpense = ({ title, amount, category, notes = '' }) => {
     const cleanTitle = String(title ?? '').trim();
@@ -64,21 +94,25 @@ export function ExpensesProvider({ children }) {
       return { ok: false, error: 'El monto debe ser un número mayor a 0.' };
     }
 
-    const newExpense = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    const payload = {
       title: cleanTitle,
       amount: numericAmount,
       category: category || 'Otros',
       notes: String(notes ?? '').trim(),
-      createdAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
     };
 
-    setExpenses((prev) => [newExpense, ...prev]);
-    return { ok: true, expense: newExpense };
+    addDoc(collection(db, 'expenses'), payload).catch((err) =>
+      console.error('Error al guardar gasto:', err)
+    );
+
+    return { ok: true, expense: payload };
   };
 
   const removeExpense = (id) => {
-    setExpenses((prev) => prev.filter((item) => item.id !== id));
+    deleteDoc(doc(db, 'expenses', id)).catch((err) =>
+      console.error('Error al eliminar gasto:', err)
+    );
   };
 
   const updateSetting = (key, value) => {
